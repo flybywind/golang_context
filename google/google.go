@@ -9,10 +9,12 @@
 package google
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"mycontext/query"
 	"net/http"
+	"time"
 )
 
 // Results is an ordered list of search results.
@@ -70,8 +72,22 @@ func httpDo(ctx *query.QueryCtx, req *http.Request, f func(*http.Response, error
 	// Run the HTTP request in a goroutine and pass the response to f.
 	tr := &http.Transport{}
 	client := &http.Client{Transport: tr}
+	// WithCancel会在ctx的children中增加cancelDb，这样当
+	// ctx 结束的时候，cancelDb也会受到消息
+	cancelDb, cancel := context.WithCancel(ctx.Context)
+	defer cancel()
 	c := make(chan error, 1)
 	go func() { c <- f(client.Do(req)) }()
+	go func(ctx context.Context) {
+		t := time.NewTimer(2 * time.Second)
+
+		select {
+		case <-t.C:
+			log.Println("db access finished!")
+		case <-ctx.Done():
+			log.Println("canceld by parent, release resource")
+		}
+	}(cancelDb)
 	select {
 	case <-ctx.Done():
 		tr.CancelRequest(req)
